@@ -6,12 +6,14 @@ ToolRegistry — agent'ın çağırabileceği tool'ların kataloğu.
   - requires_approval flag - human-in-the-loop için ToolApprovalRequired raise
   - sync ve async invoke
   - Tool başına execution timeout
+  - Tool composition via ToolExecutionContext
+  - Service registration for dependency injection
 """
 from __future__ import annotations
 import asyncio
 import inspect
 import time
-from typing import Any, Callable, Iterator, Optional
+from typing import Any, Callable, Iterator, Optional, TYPE_CHECKING
 
 from auraos.exceptions import (
     ToolApprovalRequired,
@@ -23,6 +25,9 @@ from auraos.tools.decorator import is_tool, tool as tool_decorator
 from auraos.tools.schema import ToolSchema
 from auraos.tools.validator import validate_tool_arguments
 from auraos.utils.idempotency import IdempotencyStore, make_idempotency_key
+
+if TYPE_CHECKING:
+    from auraos.tools.context import ToolExecutionContext
 
 
 class ApprovalCallback:
@@ -55,10 +60,19 @@ class ToolRegistry:
         idempotency_store: Optional[IdempotencyStore] = None,
     ):
         self._tools: dict[str, Callable] = {}
+        self._services: dict[type, Any] = {}
         self.approval_callback = approval_callback
         self.default_timeout = default_timeout
         self.rbac_guard = rbac_guard
         self.idempotency_store = idempotency_store
+
+    def set_service(self, service_type: type, instance: Any) -> None:
+        """Register a service for dependency injection."""
+        self._services[service_type] = instance
+
+    def get_service(self, service_type: type) -> Any:
+        """Get a registered service."""
+        return self._services.get(service_type)
 
     def _check_rbac(self, func: Callable, name: str) -> None:
         if self.rbac_guard is None:
@@ -101,11 +115,20 @@ class ToolRegistry:
             from auraos.exceptions import ToolApprovalDenied
             raise ToolApprovalDenied(name, "user denied approval")
 
-    def invoke(self, name: str, arguments: dict[str, Any], timeout: Optional[float] = None) -> Any:
+    def invoke(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        timeout: Optional[float] = None,
+        context: Optional["ToolExecutionContext"] = None,
+    ) -> Any:
         func = self._get(name)
         cleaned = validate_tool_arguments(func, name, dict(arguments or {}))
         self._check_rbac(func, name)
         self._check_approval(func, name, cleaned)
+
+        if getattr(func, "__auraos_composable__", False) and context is not None:
+            cleaned["ctx"] = context
 
         if self.idempotency_store and getattr(func, "__auraos_idempotent__", False):
             key = make_idempotency_key(name, cleaned)
@@ -140,11 +163,20 @@ class ToolRegistry:
             self.idempotency_store.put(make_idempotency_key(name, cleaned), result)
         return result
 
-    async def ainvoke(self, name: str, arguments: dict[str, Any], timeout: Optional[float] = None) -> Any:
+    async def ainvoke(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        timeout: Optional[float] = None,
+        context: Optional["ToolExecutionContext"] = None,
+    ) -> Any:
         func = self._get(name)
         cleaned = validate_tool_arguments(func, name, dict(arguments or {}))
         self._check_rbac(func, name)
         await self._acheck_approval(func, name, cleaned)
+
+        if getattr(func, "__auraos_composable__", False) and context is not None:
+            cleaned["ctx"] = context
 
         if self.idempotency_store and getattr(func, "__auraos_idempotent__", False):
             key = make_idempotency_key(name, cleaned)

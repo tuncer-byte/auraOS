@@ -27,3 +27,12 @@ def gemini_llm():
         pytest.skip("GEMINI_API_KEY/GOOGLE_API_KEY tanımlı değil")
     from auraos.llm.factory import get_llm
     return get_llm("gemini/gemini-2.5-flash")
+
+
+@pytest.fixture
+def event_loop():
+    """Create event loop for async tests."""
+    import asyncio
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()

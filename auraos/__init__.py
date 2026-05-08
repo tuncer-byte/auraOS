@@ -40,6 +40,8 @@ from auraos.memory.session import (
 from auraos.team.team import Team, TeamMode
 from auraos.tools.decorator import tool
 from auraos.tools.registry import ToolRegistry, ApprovalCallback, AlwaysApprove
+from auraos.tools.context import ToolExecutionContext, create_context
+from auraos.tools.subagent import create_sub_agent_tool, create_agent_router
 from auraos.utils.cache import InMemoryCache, RedisCache, get_default_cache
 from auraos.utils.rate_limit import RateLimiter, TokenBucket, get_rate_limiter
 
@@ -64,7 +66,25 @@ from auraos.security.rbac import (
 from auraos.utils.circuit_breaker import CircuitBreaker, CircuitOpenError, CircuitState
 from auraos.utils.idempotency import IdempotencyStore, make_idempotency_key
 
-__version__ = "0.2.0"
+from auraos.workflow import (
+    Workflow,
+    WorkflowExecutor,
+    WorkflowExecution,
+    WorkflowState,
+    StateStore,
+    InMemoryStateStore,
+    ExecutionStatus,
+    Node,
+    NodeResult,
+    node,
+    workflow,
+    condition,
+    approval,
+    parallel,
+    merge,
+)
+
+__version__ = "0.3.0"
 __all__ = [
     "Agent",
     "AutonomousAgent",
@@ -75,6 +95,10 @@ __all__ = [
     "ToolRegistry",
     "ApprovalCallback",
     "AlwaysApprove",
+    "ToolExecutionContext",
+    "create_context",
+    "create_sub_agent_tool",
+    "create_agent_router",
     "Memory",
     "ConversationMemory",
     "Session",
@@ -136,4 +160,20 @@ __all__ = [
     "SessionError",
     "GuardrailError",
     "RateLimitExceededError",
+    # Workflow
+    "Workflow",
+    "WorkflowExecutor",
+    "WorkflowExecution",
+    "WorkflowState",
+    "StateStore",
+    "InMemoryStateStore",
+    "ExecutionStatus",
+    "Node",
+    "NodeResult",
+    "node",
+    "workflow",
+    "condition",
+    "approval",
+    "parallel",
+    "merge",
 ]

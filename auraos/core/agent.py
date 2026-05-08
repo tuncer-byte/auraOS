@@ -72,6 +72,8 @@ class Agent:
         circuit_breaker: Optional[CircuitBreaker] = None,
         metrics: Optional[MetricsRegistry] = None,
         actor: Optional[str] = None,
+        parallel_tools: bool = False,
+        max_tool_concurrency: int = 5,
     ):
         self.name = name
         self.model = model
@@ -104,6 +106,8 @@ class Agent:
         self.circuit_breaker = circuit_breaker
         self.metrics = metrics or METRICS
         self.actor = actor or name
+        self.parallel_tools = parallel_tools
+        self.max_tool_concurrency = max_tool_concurrency
 
         self._m_calls = self.metrics.counter("auraos_agent_calls_total", "Agent çağrı sayısı")
         self._m_errors = self.metrics.counter("auraos_agent_errors_total", "Agent hata sayısı")
@@ -308,15 +312,26 @@ class Agent:
                 total_tokens += llm_resp.tokens_used
 
                 if llm_resp.tool_calls:
-                    for tc in llm_resp.tool_calls:
-                        call = await self._invoke_tool_async(tc)
-                        tool_calls.append(call)
-                        messages.append({"role": "assistant", "content": None, "tool_calls": [tc]})
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc.get("id", tc["name"]),
-                            "content": json.dumps(call.result, default=str),
-                        })
+                    if self.parallel_tools and len(llm_resp.tool_calls) > 1:
+                        calls = await self._invoke_tools_parallel(llm_resp.tool_calls)
+                        for tc, call in zip(llm_resp.tool_calls, calls):
+                            tool_calls.append(call)
+                            messages.append({"role": "assistant", "content": None, "tool_calls": [tc]})
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.get("id", tc["name"]),
+                                "content": json.dumps(call.result, default=str),
+                            })
+                    else:
+                        for tc in llm_resp.tool_calls:
+                            call = await self._invoke_tool_async(tc)
+                            tool_calls.append(call)
+                            messages.append({"role": "assistant", "content": None, "tool_calls": [tc]})
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.get("id", tc["name"]),
+                                "content": json.dumps(call.result, default=str),
+                            })
                 else:
                     final_output = llm_resp.content
                     break
@@ -526,6 +541,33 @@ class Agent:
                 details={"args": tc.get("arguments", {}), "duration_ms": int(duration)},
             )
         return call
+
+    async def _invoke_tools_parallel(
+        self,
+        tool_calls: list[dict[str, Any]],
+    ) -> list[ToolCall]:
+        """Execute multiple tools in parallel with concurrency control."""
+        semaphore = asyncio.Semaphore(self.max_tool_concurrency)
+
+        async def invoke_with_semaphore(tc: dict[str, Any]) -> ToolCall:
+            async with semaphore:
+                return await self._invoke_tool_async(tc)
+
+        tasks = [invoke_with_semaphore(tc) for tc in tool_calls]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        processed: list[ToolCall] = []
+        for tc, result in zip(tool_calls, results):
+            if isinstance(result, Exception):
+                processed.append(ToolCall(
+                    name=tc["name"],
+                    arguments=tc.get("arguments", {}),
+                    result={"error": "parallel_execution_failed", "message": str(result)},
+                    duration_ms=0,
+                ))
+            else:
+                processed.append(result)
+        return processed
 
     def _persist_turn(self, session: Optional[Session], user_msg: str, assistant_msg: str) -> None:
         if session is not None and self.session_manager is not None:

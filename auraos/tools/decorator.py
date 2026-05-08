@@ -11,6 +11,12 @@
             b: İkinci sayı
         '''
         return a + b
+
+Composable tool (tool calling tools):
+    @tool(composable=True)
+    def process_customer(customer_id: str, ctx: ToolExecutionContext) -> dict:
+        kyc = ctx.call("validate_tc_kimlik", tc=customer_id)
+        return {"kyc": kyc}
 """
 from __future__ import annotations
 from functools import wraps
@@ -27,6 +33,8 @@ def tool(
     requires_approval: bool = False,
     required_roles: Optional[frozenset[str] | set[str] | tuple[str, ...]] = None,
     idempotent: bool = False,
+    composable: bool = False,
+    streaming: bool = False,
 ) -> Callable:
     """Fonksiyonu agent tool'una dönüştürür.
 
@@ -34,6 +42,8 @@ def tool(
         requires_approval: Çağrı öncesi human-in-the-loop onay gerekir.
         required_roles: RBAC için gerekli rollerden en az biri.
         idempotent: Aynı argümanlarla tekrar çağrı varsa cache'lenmiş sonuç döner.
+        composable: Tool, diğer tool'ları çağırabilir (ctx parametresi alır).
+        streaming: Tool, async generator olarak sonuç stream eder.
     """
 
     def wrap(f: Callable) -> Callable:
@@ -42,6 +52,11 @@ def tool(
             schema.name = name
         if description:
             schema.description = description
+
+        if composable and "ctx" in schema.parameters.get("properties", {}):
+            del schema.parameters["properties"]["ctx"]
+            if "ctx" in schema.parameters.get("required", []):
+                schema.parameters["required"].remove("ctx")
 
         @wraps(f)
         def wrapper(*args, **kwargs) -> Any:
@@ -54,11 +69,29 @@ def tool(
             frozenset(required_roles) if required_roles else frozenset()
         )
         wrapper.__auraos_idempotent__ = idempotent
+        wrapper.__auraos_composable__ = composable
+        wrapper.__auraos_streaming__ = streaming
         return wrapper
 
     if func is None:
         return wrap
     return wrap(func)
+
+
+def streaming_tool(
+    func: Optional[Callable] = None,
+    **kwargs,
+) -> Callable:
+    """Async generator tool - sonuçları stream eder.
+
+    Usage:
+        @streaming_tool
+        async def search_large_dataset(query: str):
+            async for result in database.stream_search(query):
+                yield {"match": result}
+    """
+    kwargs["streaming"] = True
+    return tool(func, **kwargs)
 
 
 def is_tool(obj: Any) -> bool:
