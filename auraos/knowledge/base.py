@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from auraos.knowledge.document import Document
 from auraos.knowledge.chunker import chunk_text
+from auraos.knowledge.splitters import TextSplitter, FixedSplitter
 
 
 class KnowledgeBase:
@@ -28,10 +29,12 @@ class KnowledgeBase:
         backend: str = "memory",
         embedder: Optional[Any] = None,
         collection: str = "auraos_kb",
+        splitter: Optional[TextSplitter] = None,
     ):
         self.backend = backend
         self.embedder = embedder
         self.collection = collection
+        self.splitter = splitter
         self._docs: list[Document] = []
         self._chroma = None
 
@@ -49,10 +52,16 @@ class KnowledgeBase:
         text: str,
         metadata: Optional[dict[str, Any]] = None,
         chunk_size: int = 500,
+        splitter: Optional[TextSplitter] = None,
     ) -> list[str]:
         """Bir metni chunk'layıp ekler, eklenen doc_id'leri döner."""
+        s = splitter or self.splitter
+        if s:
+            chunks = s.split(text)
+        else:
+            chunks = chunk_text(text, chunk_size=chunk_size)
         ids: list[str] = []
-        for chunk in chunk_text(text, chunk_size=chunk_size):
+        for chunk in chunks:
             doc = Document(content=chunk, metadata=metadata or {})
             if self.embedder:
                 doc.embedding = self.embedder(chunk)
@@ -64,6 +73,25 @@ class KnowledgeBase:
                     documents=[chunk],
                     metadatas=[metadata or {}],
                 )
+        return ids
+
+    def add_file(
+        self,
+        path: str,
+        metadata: Optional[dict[str, Any]] = None,
+        chunk_size: int = 500,
+        splitter: Optional[TextSplitter] = None,
+        loader: Optional[Any] = None,
+    ) -> list[str]:
+        """Dosyayı yükle, chunk'la, ekle."""
+        from auraos.knowledge.loaders import get_loader, DocumentLoader
+        if loader is None:
+            loader = get_loader(path)
+        docs = loader.load(path)
+        ids: list[str] = []
+        for doc in docs:
+            merged_meta = {**(doc.metadata or {}), **(metadata or {})}
+            ids.extend(self.add(doc.content, metadata=merged_meta, chunk_size=chunk_size, splitter=splitter))
         return ids
 
     def search(self, query: str, top_k: int = 3) -> str:

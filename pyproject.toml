@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "auraos"
-version = "0.2.0"
+version = "0.4.0"
 description = "AuraOS - Kurumsal sınıf finansal AI Agent Framework"
 authors = [{name = "Ates", email = "ates@example.com"}]
 readme = "README.md"
@@ -33,16 +33,20 @@ dependencies = [
 [project.optional-dependencies]
 openai = ["openai>=1.0"]
 anthropic = ["anthropic>=0.40"]
-google = ["google-generativeai>=0.3"]
-ollama = ["ollama>=0.1"]
+google = ["google-genai>=1.0"]
+groq = ["groq>=0.4"]
+ollama = ["ollama>=0.4"]
 rag = ["chromadb>=0.4", "sentence-transformers>=2.0"]
+loaders = ["pdfplumber>=0.9", "python-docx>=1.0", "beautifulsoup4>=4.12"]
 memory = ["redis>=5.0", "psycopg2-binary>=2.9"]
 ocr = ["pytesseract>=0.3", "Pillow>=10.0"]
 fintech = ["yfinance>=0.2", "pandas>=2.0"]
 all = [
     "openai>=1.0",
     "anthropic>=0.40",
-    "google-generativeai>=0.3",
+    "google-genai>=1.0",
+    "groq>=0.4",
+    "ollama>=0.4",
     "chromadb>=0.4",
     "sentence-transformers>=2.0",
     "redis>=5.0",

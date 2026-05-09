@@ -17,7 +17,7 @@ from auraos.exceptions import (
     GuardrailError,
     RateLimitExceededError,
 )
-from auraos.guardrails import Guardrails
+from auraos.guardrails import Guardrails, Anonymizer
 from auraos.knowledge.base import KnowledgeBase
 from auraos.knowledge.embeddings import (
     EmbeddingProvider,
@@ -36,6 +36,7 @@ from auraos.memory.session import (
     SessionManager,
     InMemorySessionStore,
     RedisSessionStore,
+    SQLiteSessionStore,
 )
 from auraos.team.team import Team, TeamMode
 from auraos.tools.decorator import tool
@@ -63,8 +64,36 @@ from auraos.security.rbac import (
     set_principal,
     get_principal,
 )
+from auraos.security.policy import (
+    Policy,
+    PolicyAction,
+    PolicyResult,
+    PolicyRule,
+    pii_policy,
+    financial_data_policy,
+    prompt_injection_policy,
+)
 from auraos.utils.circuit_breaker import CircuitBreaker, CircuitOpenError, CircuitState
 from auraos.utils.idempotency import IdempotencyStore, make_idempotency_key
+
+from auraos.knowledge.loaders import (
+    DocumentLoader,
+    TextLoader,
+    MarkdownLoader,
+    CSVLoader,
+    JSONLoader,
+    PDFLoader,
+    DOCXLoader,
+    HTMLLoader,
+    get_loader,
+)
+from auraos.knowledge.splitters import (
+    TextSplitter,
+    RecursiveSplitter,
+    MarkdownSplitter,
+    SentenceSplitter,
+    FixedSplitter,
+)
 
 from auraos.workflow import (
     Workflow,
@@ -84,7 +113,7 @@ from auraos.workflow import (
     merge,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "Agent",
     "AutonomousAgent",
@@ -105,6 +134,7 @@ __all__ = [
     "SessionManager",
     "InMemorySessionStore",
     "RedisSessionStore",
+    "SQLiteSessionStore",
     "KnowledgeBase",
     "EmbeddingProvider",
     "HashEmbedding",
@@ -118,6 +148,7 @@ __all__ = [
     "LLMResponse",
     "StreamChunk",
     "Guardrails",
+    "Anonymizer",
     "InMemoryCache",
     "RedisCache",
     "get_default_cache",
@@ -151,6 +182,30 @@ __all__ = [
     "CircuitState",
     "IdempotencyStore",
     "make_idempotency_key",
+    # Policy
+    "Policy",
+    "PolicyAction",
+    "PolicyResult",
+    "PolicyRule",
+    "pii_policy",
+    "financial_data_policy",
+    "prompt_injection_policy",
+    # Loaders
+    "DocumentLoader",
+    "TextLoader",
+    "MarkdownLoader",
+    "CSVLoader",
+    "JSONLoader",
+    "PDFLoader",
+    "DOCXLoader",
+    "HTMLLoader",
+    "get_loader",
+    # Splitters
+    "TextSplitter",
+    "RecursiveSplitter",
+    "MarkdownSplitter",
+    "SentenceSplitter",
+    "FixedSplitter",
     # Exceptions
     "AuraOSError",
     "AgentError",

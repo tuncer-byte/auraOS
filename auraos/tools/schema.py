@@ -42,6 +42,16 @@ class ToolSchema:
             "input_schema": self.parameters,
         }
 
+    def to_gemini(self) -> dict:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
+        }
+
+    def to_groq(self) -> dict:
+        return self.to_openai()
+
 
 def schema_from_function(func: Callable) -> ToolSchema:
     """Bir Python fonksiyonundan tool şeması üret."""

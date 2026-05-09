@@ -111,6 +111,66 @@ class RedisSessionStore:
         self._client.delete(self._k(session_id))
 
 
+class SQLiteSessionStore:
+    def __init__(self, db_path: str = "auraos_sessions.db", ttl_seconds: float = 86400.0):
+        import sqlite3
+        import threading
+        self.ttl = ttl_seconds
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS sessions ("
+            "  session_id TEXT PRIMARY KEY,"
+            "  data TEXT NOT NULL,"
+            "  created_at REAL NOT NULL,"
+            "  last_active REAL NOT NULL"
+            ")"
+        )
+        self._conn.commit()
+
+    def get(self, session_id: str) -> Optional[Session]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT data, last_active FROM sessions WHERE session_id = ?",
+                (session_id,),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        data_str, last_active = row
+        if self.ttl > 0 and (time.time() - last_active) > self.ttl:
+            self.delete(session_id)
+            return None
+        return Session.from_dict(json.loads(data_str))
+
+    def save(self, session: Session) -> None:
+        session.last_active = time.time()
+        payload = json.dumps(session.to_dict(), default=str)
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO sessions (session_id, data, created_at, last_active) "
+                "VALUES (?, ?, ?, ?)",
+                (session.session_id, payload, session.created_at, session.last_active),
+            )
+            self._conn.commit()
+
+    def delete(self, session_id: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+            self._conn.commit()
+
+    def cleanup_expired(self) -> int:
+        if self.ttl <= 0:
+            return 0
+        cutoff = time.time() - self.ttl
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM sessions WHERE last_active < ?", (cutoff,)
+            )
+            self._conn.commit()
+            return cur.rowcount
+
+
 class SessionManager:
     """
     Session lifecycle wrapper.

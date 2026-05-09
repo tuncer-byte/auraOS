@@ -37,8 +37,9 @@ class CacheConfig:
 
 @dataclass
 class SessionConfig:
-    backend: str = "memory"  # memory | redis
+    backend: str = "memory"  # memory | redis | sqlite
     redis_url: str = "redis://localhost:6379/0"
+    sqlite_path: str = "auraos_sessions.db"
     ttl_seconds: float = 3600.0
     max_messages: int = 50
 

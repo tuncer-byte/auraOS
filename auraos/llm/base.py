@@ -24,6 +24,9 @@ class LLMResponse:
     content: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     tokens_used: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    thinking_content: str = ""
     raw: Any = None
 
 

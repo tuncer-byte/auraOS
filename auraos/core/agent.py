@@ -12,6 +12,7 @@ Yetenekler:
 from __future__ import annotations
 import asyncio
 import json
+import re
 import time
 from typing import Any, AsyncIterator, Callable, Iterator, Optional
 
@@ -74,9 +75,21 @@ class Agent:
         actor: Optional[str] = None,
         parallel_tools: bool = False,
         max_tool_concurrency: int = 5,
+        role: Optional[str] = None,
+        goal: Optional[str] = None,
+        instructions: Optional[str] = None,
+        thinking_enabled: bool = False,
+        thinking_budget: int = 10000,
+        reflection: bool = False,
     ):
         self.name = name
         self.model = model
+        self.role = role
+        self.goal = goal
+        self.instructions = instructions
+        self.thinking_enabled = thinking_enabled
+        self.thinking_budget = thinking_budget
+        self.reflection = reflection
         self.system_prompt = system_prompt or self._default_system_prompt()
         self.max_iterations = max_iterations
         self.memory = memory
@@ -119,6 +132,16 @@ class Agent:
         self._m_llm_cost = self.metrics.counter("auraos_llm_cost_usd_total", "LLM USD maliyeti")
 
     def _default_system_prompt(self) -> str:
+        if self.role or self.goal or self.instructions:
+            parts = [f"Sen {self.name} adlı bir AI ajanısın."]
+            if self.role:
+                parts.append(f"Rolün: {self.role}")
+            if self.goal:
+                parts.append(f"Hedefin: {self.goal}")
+            if self.instructions:
+                parts.append(f"Talimatlar: {self.instructions}")
+            parts.append("Sana verilen tool'ları kullanarak görevi yerine getir.")
+            return "\n".join(parts)
         return (
             f"Sen {self.name} adlı yardımcı bir finansal AI ajanısın. "
             "Sana verilen tool'ları kullanarak görevi yerine getir. "
@@ -126,22 +149,61 @@ class Agent:
             "Bilmediğin bir şeyi tahmin etme; tool'lardan veri çek."
         )
 
+    # ---------- Structured output ----------
+    @staticmethod
+    def _extract_json(text: str) -> str:
+        m = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
+        if m:
+            return m.group(1).strip()
+        return text.strip()
+
+    @staticmethod
+    def _parse_structured_output(text: str, response_format: type):
+        try:
+            json_str = Agent._extract_json(text)
+            return response_format.model_validate_json(json_str)
+        except Exception:
+            try:
+                return response_format.model_validate_json(text)
+            except Exception:
+                return None
+
     # ---------- Mesaj inşası ----------
     def _build_messages(
         self,
-        task_text: str,
+        task: Task,
         session: Optional[Session] = None,
     ) -> list[dict[str, Any]]:
-        messages: list[dict[str, Any]] = [{"role": "system", "content": self.system_prompt}]
+        sys_prompt = task.system_prompt or self.system_prompt
+        messages: list[dict[str, Any]] = [{"role": "system", "content": sys_prompt}]
+        if task.response_format is not None:
+            try:
+                schema = task.response_format.model_json_schema()
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "Yanıtını aşağıdaki JSON şemasına uygun, geçerli bir JSON olarak ver. "
+                        "Sadece JSON döndür, açıklama ekleme.\n"
+                        f"Şema: {json.dumps(schema, ensure_ascii=False)}"
+                    ),
+                })
+            except (AttributeError, TypeError):
+                pass
         if self.knowledge:
-            ctx = self.knowledge.search(task_text, top_k=3)
+            ctx = self.knowledge.search(task.description, top_k=3)
             if ctx:
                 messages.append({"role": "system", "content": f"İlgili bilgi tabanı verisi:\n{ctx}"})
         if session:
             messages.extend(session.recent(limit=20))
         elif self.memory:
             messages.extend(self.memory.get_recent(limit=10))
-        messages.append({"role": "user", "content": task_text})
+        if task.images:
+            content: list[dict[str, Any]] = [{"type": "text", "text": task.description}]
+            for img_path in task.images:
+                content.append({"type": "image_url", "image_url": {"url": img_path}})
+            messages.append({"role": "user", "content": content})
+        else:
+            messages.append({"role": "user", "content": task.description})
         return messages
 
     def _resolve_session(self, session_id: Optional[str]) -> Optional[Session]:
@@ -206,13 +268,38 @@ class Agent:
                 self._audit("agent.run.input_blocked", "denied", session_id=session_id, details={"hits": inp.hits})
                 raise AuraOSError("Input guardrail violation", details={"hits": inp.hits})
 
+        if self.guardrails and self.guardrails.pii_anonymize:
+            task = Task(
+                description=self.guardrails.anonymize_input(task.description)[0],
+                context=task.context,
+                expected_output=task.expected_output,
+                max_iterations=task.max_iterations,
+                require_human_approval=task.require_human_approval,
+                task_id=task.task_id,
+                tools=task.tools,
+                response_format=task.response_format,
+                images=task.images,
+                system_prompt=task.system_prompt,
+            )
+
+        saved_registry = None
+        if task.tools:
+            saved_registry = self.registry
+            self.registry = ToolRegistry(
+                approval_callback=saved_registry.approval_callback,
+                default_timeout=saved_registry.default_timeout,
+            )
+            for t in task.tools:
+                self.registry.register(t)
+
         session = self._resolve_session(session_id)
-        messages = self._build_messages(task.description, session=session)
+        messages = self._build_messages(task, session=session)
 
         tool_calls: list[ToolCall] = []
         total_tokens = 0
         iteration = 0
         final_output = ""
+        original_description = task.description
 
         try:
             for iteration in range(1, self.max_iterations + 1):
@@ -241,11 +328,29 @@ class Agent:
                     f"Agent {self.name} reached max_iterations={self.max_iterations}"
                 )
 
+            if self.reflection and final_output:
+                critique_msg = messages + [
+                    {"role": "assistant", "content": final_output},
+                    {"role": "user", "content": "Bu cevabı eleştir. Eksik, hatalı veya iyileştirilebilecek noktaları belirt."},
+                ]
+                critique_resp = self._call_llm(critique_msg)
+                total_tokens += critique_resp.tokens_used
+                improve_msg = critique_msg + [
+                    {"role": "assistant", "content": critique_resp.content},
+                    {"role": "user", "content": "Eleştiriye göre cevabını iyileştir ve son halini ver."},
+                ]
+                improved_resp = self._call_llm(improve_msg)
+                total_tokens += improved_resp.tokens_used
+                final_output = improved_resp.content
+
+            if self.guardrails and self.guardrails.pii_anonymize:
+                final_output = self.guardrails.deanonymize_output(final_output)
+
             if self.guardrails:
                 out = self.guardrails.check_output(final_output)
                 final_output = out.text
 
-            self._persist_turn(session, task.description, final_output)
+            self._persist_turn(session, original_description, final_output)
             self.tracer.end(final_output, success=True)
             success = True
             error_msg = None
@@ -258,6 +363,13 @@ class Agent:
             final_output = f"Hata: {e.message}"
             success = False
             error_msg = e.message
+        finally:
+            if saved_registry is not None:
+                self.registry = saved_registry
+
+        parsed = None
+        if success and task.response_format is not None:
+            parsed = self._parse_structured_output(final_output, task.response_format)
 
         duration_ms = (time.time() - start) * 1000
         self._m_iter.observe(iteration, labels={"agent": self.name})
@@ -272,9 +384,8 @@ class Agent:
             tokens_used=total_tokens,
             duration_ms=duration_ms,
             error=error_msg,
+            parsed=parsed,
         )
-
-    # ---------- Async run ----------
     async def arun(
         self,
         task: Task | str,
@@ -295,13 +406,38 @@ class Agent:
                 self._audit("agent.arun.input_blocked", "denied", session_id=session_id, details={"hits": inp.hits})
                 raise AuraOSError("Input guardrail violation", details={"hits": inp.hits})
 
+        if self.guardrails and self.guardrails.pii_anonymize:
+            task = Task(
+                description=self.guardrails.anonymize_input(task.description)[0],
+                context=task.context,
+                expected_output=task.expected_output,
+                max_iterations=task.max_iterations,
+                require_human_approval=task.require_human_approval,
+                task_id=task.task_id,
+                tools=task.tools,
+                response_format=task.response_format,
+                images=task.images,
+                system_prompt=task.system_prompt,
+            )
+
+        saved_registry = None
+        if task.tools:
+            saved_registry = self.registry
+            self.registry = ToolRegistry(
+                approval_callback=saved_registry.approval_callback,
+                default_timeout=saved_registry.default_timeout,
+            )
+            for t in task.tools:
+                self.registry.register(t)
+
         session = self._resolve_session(session_id)
-        messages = self._build_messages(task.description, session=session)
+        messages = self._build_messages(task, session=session)
 
         tool_calls: list[ToolCall] = []
         total_tokens = 0
         iteration = 0
         final_output = ""
+        original_description = task.description
 
         try:
             for iteration in range(1, self.max_iterations + 1):
@@ -340,11 +476,29 @@ class Agent:
                     f"Agent {self.name} reached max_iterations={self.max_iterations}"
                 )
 
+            if self.reflection and final_output:
+                critique_msg = messages + [
+                    {"role": "assistant", "content": final_output},
+                    {"role": "user", "content": "Bu cevabı eleştir. Eksik, hatalı veya iyileştirilebilecek noktaları belirt."},
+                ]
+                critique_resp = await self._acall_llm(critique_msg)
+                total_tokens += critique_resp.tokens_used
+                improve_msg = critique_msg + [
+                    {"role": "assistant", "content": critique_resp.content},
+                    {"role": "user", "content": "Eleştiriye göre cevabını iyileştir ve son halini ver."},
+                ]
+                improved_resp = await self._acall_llm(improve_msg)
+                total_tokens += improved_resp.tokens_used
+                final_output = improved_resp.content
+
+            if self.guardrails and self.guardrails.pii_anonymize:
+                final_output = self.guardrails.deanonymize_output(final_output)
+
             if self.guardrails:
                 out = self.guardrails.check_output(final_output)
                 final_output = out.text
 
-            self._persist_turn(session, task.description, final_output)
+            self._persist_turn(session, original_description, final_output)
             self.tracer.end(final_output, success=True)
             success = True
             error_msg = None
@@ -357,6 +511,13 @@ class Agent:
             final_output = f"Hata: {e.message}"
             success = False
             error_msg = e.message
+        finally:
+            if saved_registry is not None:
+                self.registry = saved_registry
+
+        parsed = None
+        if success and task.response_format is not None:
+            parsed = self._parse_structured_output(final_output, task.response_format)
 
         duration_ms = (time.time() - start) * 1000
         self._m_iter.observe(iteration, labels={"agent": self.name})
@@ -371,9 +532,8 @@ class Agent:
             tokens_used=total_tokens,
             duration_ms=duration_ms,
             error=error_msg,
+            parsed=parsed,
         )
-
-    # ---------- Streaming ----------
     async def astream(
         self,
         task: Task | str,
@@ -391,8 +551,18 @@ class Agent:
             if not inp.ok and self.guardrails.raise_on_violation:
                 raise AuraOSError("Input guardrail violation", details={"hits": inp.hits})
 
+        saved_registry = None
+        if task.tools:
+            saved_registry = self.registry
+            self.registry = ToolRegistry(
+                approval_callback=saved_registry.approval_callback if saved_registry else None,
+                default_timeout=saved_registry.default_timeout if saved_registry else None,
+            )
+            for t in task.tools:
+                self.registry.register(t)
+
         session = self._resolve_session(session_id)
-        messages = self._build_messages(task.description, session=session)
+        messages = self._build_messages(task, session=session)
 
         accumulated_text = ""
         for iteration in range(1, self.max_iterations + 1):
@@ -442,10 +612,18 @@ class Agent:
                 accumulated_text = out.text
 
         self._persist_turn(session, task.description, accumulated_text)
+        if saved_registry is not None:
+            self.registry = saved_registry
         yield StreamChunk(type="done")
 
     # ---------- Yardımcı: LLM çağrısı (cache + error wrap) ----------
+    def _thinking_kwargs(self) -> dict[str, Any]:
+        if not self.thinking_enabled:
+            return {}
+        return {"thinking": {"type": "enabled", "budget_tokens": self.thinking_budget}}
+
     def _call_llm(self, messages: list[dict[str, Any]]):
+        extra = self._thinking_kwargs()
         if self.cache_llm_responses and self.cache:
             key = make_cache_key("llm", self.model, messages, self.registry.names())
             cached = self.cache.get(key)
@@ -454,10 +632,10 @@ class Agent:
         try:
             if self.circuit_breaker:
                 resp = self.circuit_breaker.call(
-                    self.llm.complete, messages=messages, tools=self.registry.schemas()
+                    self.llm.complete, messages=messages, tools=self.registry.schemas(), **extra
                 )
             else:
-                resp = self.llm.complete(messages=messages, tools=self.registry.schemas())
+                resp = self.llm.complete(messages=messages, tools=self.registry.schemas(), **extra)
         except CircuitOpenError:
             self._m_errors.inc(labels={"agent": self.name, "error": "CircuitOpen"})
             raise LLMError("LLM circuit open", details={"breaker": self.circuit_breaker.name if self.circuit_breaker else ""})
@@ -471,13 +649,14 @@ class Agent:
         return resp
 
     async def _acall_llm(self, messages: list[dict[str, Any]]):
+        extra = self._thinking_kwargs()
         try:
             if self.circuit_breaker:
                 resp = await self.circuit_breaker.acall(
-                    self.llm.acomplete, messages=messages, tools=self.registry.schemas()
+                    self.llm.acomplete, messages=messages, tools=self.registry.schemas(), **extra
                 )
             else:
-                resp = await self.llm.acomplete(messages=messages, tools=self.registry.schemas())
+                resp = await self.llm.acomplete(messages=messages, tools=self.registry.schemas(), **extra)
         except CircuitOpenError:
             self._m_errors.inc(labels={"agent": self.name, "error": "CircuitOpen"})
             raise LLMError("LLM circuit open")

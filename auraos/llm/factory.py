@@ -34,4 +34,8 @@ def get_llm(model: str, **kwargs) -> BaseLLM:
         from auraos.llm.providers.ollama_provider import OllamaProvider
         return OllamaProvider(model=model_name, **kwargs)
 
+    if provider == "groq":
+        from auraos.llm.providers.groq_provider import GroqProvider
+        return GroqProvider(model=model_name, **kwargs)
+
     raise ValueError(f"Bilinmeyen provider: {provider}")

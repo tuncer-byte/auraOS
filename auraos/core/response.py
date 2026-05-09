@@ -27,6 +27,7 @@ class AgentResponse:
     duration_ms: float = 0.0
     timestamp: datetime = field(default_factory=datetime.utcnow)
     metadata: dict[str, Any] = field(default_factory=dict)
+    parsed: Optional[Any] = None
 
     def __str__(self) -> str:
         return self.output

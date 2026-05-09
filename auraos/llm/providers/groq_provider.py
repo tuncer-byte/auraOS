@@ -1,4 +1,4 @@
-"""OpenAI provider — streaming + async + error classification."""
+"""Groq provider — OpenAI-uyumlu API, streaming + async + tools."""
 from __future__ import annotations
 
 import json
@@ -15,18 +15,18 @@ from auraos.llm.base import BaseLLM, LLMResponse, StreamChunk
 from auraos.tools.schema import ToolSchema
 
 
-class OpenAIProvider(BaseLLM):
+class GroqProvider(BaseLLM):
     supports_streaming = True
 
     def __init__(self, model: str, api_key: Optional[str] = None, **kwargs):
         super().__init__(model, **kwargs)
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.api_key = api_key or os.getenv("GROQ_API_KEY")
         try:
-            from openai import OpenAI, AsyncOpenAI
-            self.client = OpenAI(api_key=self.api_key)
-            self.async_client = AsyncOpenAI(api_key=self.api_key)
+            from groq import Groq, AsyncGroq
+            self.client = Groq(api_key=self.api_key)
+            self.async_client = AsyncGroq(api_key=self.api_key)
         except ImportError:
-            raise ImportError("openai paketi yok: pip install openai")
+            raise ImportError("groq paketi yok: pip install groq")
 
     def _classify_error(self, e: Exception) -> Exception:
         msg = str(e).lower()
@@ -49,10 +49,10 @@ class OpenAIProvider(BaseLLM):
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
+            "max_completion_tokens": max_tokens,
         }
         if tools:
-            kwargs["tools"] = [t.to_openai() for t in tools]
+            kwargs["tools"] = [t.to_groq() for t in tools]
             kwargs["tool_choice"] = "auto"
         return kwargs
 

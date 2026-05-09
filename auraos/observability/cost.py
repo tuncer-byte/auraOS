@@ -13,14 +13,21 @@ from dataclasses import dataclass
 # USD per 1k tokens. (referans: 2025-2026 yayınlanmış aralıklar; gerçek üretimde
 # config'ten yönetilir.)
 DEFAULT_PRICING: dict[str, tuple[float, float]] = {
-    # input, output
+    # input, output (USD per 1k tokens)
     "gemini-2.5-flash": (0.000075, 0.0003),
+    "gemini-2.5-flash-lite": (0.0000375, 0.00015),
     "gemini-2.5-pro": (0.00125, 0.005),
     "gpt-4o-mini": (0.00015, 0.0006),
     "gpt-4o": (0.0025, 0.01),
+    "gpt-4.1-mini": (0.0004, 0.0016),
+    "gpt-4.1": (0.002, 0.008),
     "claude-haiku-4-5": (0.0008, 0.004),
     "claude-sonnet-4-6": (0.003, 0.015),
+    "claude-opus-4-6": (0.015, 0.075),
     "claude-opus-4-7": (0.015, 0.075),
+    "llama-3.3-70b-versatile": (0.00059, 0.00079),
+    "llama-3.1-8b-instant": (0.00005, 0.00008),
+    "qwen/qwen3-32b": (0.00039, 0.00039),
 }
 
 
