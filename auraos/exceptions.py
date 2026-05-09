@@ -147,3 +147,24 @@ class PromptInjectionError(GuardrailError):
 # ---- Config ----
 class ConfigError(AuraOSError):
     """Konfigürasyon yükleme/validasyon hatası."""
+
+
+# ---- MCP hataları ----
+class MCPError(AuraOSError):
+    """MCP client/server seviyesi hata."""
+
+
+class MCPConnectionError(MCPError):
+    """MCP sunucusuna bağlantı kurulamadı."""
+
+    def __init__(self, server_name: str, message: str, **kwargs):
+        super().__init__(f"[MCP:{server_name}] {message}", **kwargs)
+        self.server_name = server_name
+
+
+class MCPToolCallError(MCPError):
+    """MCP tool çağrısı başarısız."""
+
+    def __init__(self, tool_name: str, message: str, **kwargs):
+        super().__init__(f"[MCP tool:{tool_name}] {message}", **kwargs)
+        self.tool_name = tool_name

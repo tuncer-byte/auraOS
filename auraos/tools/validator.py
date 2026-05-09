@@ -49,6 +49,14 @@ def validate_tool_arguments(func: Callable, tool_name: str, arguments: dict[str,
 
     # Bilinmeyen anahtarları at (LLM bazen ekstra alan üretir)
     accepted = {p.name for p in sig.parameters.values()}
+
+    has_var_keyword = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD
+        for p in sig.parameters.values()
+    )
+    if has_var_keyword:
+        return dict(arguments)
+
     for key in list(arguments.keys()):
         if key not in accepted:
             arguments.pop(key, None)

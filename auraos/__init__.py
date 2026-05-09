@@ -95,6 +95,9 @@ from auraos.knowledge.splitters import (
     FixedSplitter,
 )
 
+from auraos.mcp import MCPServerConfig, MCPToolCallable, build_mcp_tools, get_mcp_tools
+from auraos.mcp.client import MCPClient
+
 from auraos.workflow import (
     Workflow,
     WorkflowExecutor,
@@ -113,7 +116,7 @@ from auraos.workflow import (
     merge,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "Agent",
     "AutonomousAgent",
@@ -206,6 +209,12 @@ __all__ = [
     "MarkdownSplitter",
     "SentenceSplitter",
     "FixedSplitter",
+    # MCP
+    "MCPClient",
+    "MCPServerConfig",
+    "MCPToolCallable",
+    "build_mcp_tools",
+    "get_mcp_tools",
     # Exceptions
     "AuraOSError",
     "AgentError",
